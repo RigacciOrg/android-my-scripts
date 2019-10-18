@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Copyright (C) 2019 Niccolo Rigacci <niccolo@rigacci.org>
+#
+# Backup installed apps from an Android device, via ADB shell.
+#
+# Download (pull) apk files belonging to an installed package,
+# using the ADB (Android Debug Bridge) command line tool.
+#
+# This is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+import os.path
+import subprocess
+import sys
+from shlex import quote
+
+# Trailing slash is required for exact prefix match.
+PATHS_REQUIRE_ROOT = ['/mnt/expand/']
+ADB_TMPDIR = '/sdcard'
+
+#-------------------------------------------------------------------------
+# Get the list of installed packages, by executing either:
+#   * cmd package list packages -f
+#   * pm list packages
+#-------------------------------------------------------------------------
+def get_pkg_list(use_cmd):
+    packages = []
+    if use_cmd:
+        cmd = ['adb', 'shell', 'cmd', 'package', 'list', 'packages', '-f']
+        pkg_list = subprocess.check_output(cmd).decode('utf-8')
+        # Output line example:
+        # package:<path>/<file.apk>=<package.name>
+        for line in pkg_list.splitlines(False):
+            package_name = line.split('=')[-1]
+            packages.append(package_name)
+    else:
+        cmd = ['adb', 'shell', 'pm', 'list', 'packages']
+        pkg_list = subprocess.check_output(cmd).decode('utf-8')
+        # Output line example:
+        # package:com.android.calendar
+        for line in pkg_list.splitlines(False):
+            package_name = line.split(':')[1]
+            packages.append(package_name)
+    packages.sort()
+    return packages
+
+#-------------------------------------------------------------------------
+# Get details about a package, by executing:
+#  * dumpsys package <pkg_name>
+#-------------------------------------------------------------------------
+def dumpsys_pkg(pkg_name):
+    cmd = ['adb', 'shell', 'dumpsys', 'package', pkg_name]
+    pkg_dumpsys = subprocess.check_output(cmd).decode('utf-8')
+    pkg_version = None
+    dumpsys = {}
+    section_packages = False
+    for line in pkg_dumpsys.splitlines(False):
+        if line.startswith('Packages:'):
+            section_packages = True
+        elif not line.startswith(' '):
+            section_packages = False
+        if section_packages:
+            if line.strip().startswith('versionName='):
+                dumpsys['versionName'] = line.split('=')[1]
+                break
+    return dumpsys
+
+#-------------------------------------------------------------------------
+# Get the package's apk files (may return multiple items), by executing:
+#  * pm path <pkg_name>
+#-------------------------------------------------------------------------
+def get_pkg_paths(pkg_name):
+    pkg_paths = []
+    cmd = ['adb', 'shell', 'pm', 'path', pkg_name]
+    paths = subprocess.check_output(cmd).decode('utf-8')
+    # May return multiple lines, example:
+    # package:<path>/<file.apk>
+    for line in paths.splitlines(False):
+        pkg_paths.append(line.partition(':')[2])
+    return pkg_paths
+
+#-------------------------------------------------------------------------
+# Print usage.
+#-------------------------------------------------------------------------
+if len(sys.argv) < 2:
+    print(u'\nUsage: %s [pakage_name|--list]\n' % (os.path.basename(sys.argv[0]),))
+    sys.exit(0)
+
+#-------------------------------------------------------------------------
+# Check if we have the new "cmd" or the old "pm" program.
+#-------------------------------------------------------------------------
+try:
+    which_cmd = subprocess.check_output(['adb', 'shell', 'which', 'cmd'])
+    which_pm  = subprocess.check_output(['adb', 'shell', 'which', 'pm'])
+except subprocess.CalledProcessError as e:
+    print(u'ERROR: Cannot run "adb shell" commands')
+    sys.exit(1)
+
+if len(which_cmd) > 0:
+    use_cmd = True
+else:
+    if len(which_pm) == 0:
+        print(u'ERROR: Cannot find "cmd" nor "pm" commands')
+        sys.exit(1)
+    use_cmd = False
+
+#-------------------------------------------------------------------------
+# Print the list of installed packages.
+#-------------------------------------------------------------------------
+if sys.argv[1] == '--list':
+    installed_packages = get_pkg_list(use_cmd)
+    print('\n'.join(installed_packages))
+    sys.exit(0)
+
+#-------------------------------------------------------------------------
+# Download package's apk files.
+#-------------------------------------------------------------------------
+pkg_name = sys.argv[1]
+print(u'INFO: Getting apk files for package "%s"' % (pkg_name,))
+if use_cmd:
+    print(u'INFO: Using "cmd" for Android package management')
+else:
+    print(u'INFO: Using "pm" for Android package management')
+
+# Check if requested package is installed.
+installed_packages = get_pkg_list(use_cmd)
+if pkg_name not in installed_packages:
+    print(u'ERROR: Package "%s" not installed' % (pkg_name,))
+    sys.exit(1)
+
+# Get package version from package dumpsys.
+dumpsys = dumpsys_pkg(pkg_name)
+pkg_version = dumpsys['versionName']
+
+# Get the path of apk files belonging to package.
+pkg_paths = get_pkg_paths(pkg_name)
+
+# Download all the apk files.
+for apk_file in pkg_paths:
+    basename = os.path.basename(apk_file)
+    dst_filename = '%s-%s_%s' % (pkg_name, pkg_version, basename)
+    su_required = False
+    for path in PATHS_REQUIRE_ROOT:
+        if apk_file.startswith(path):
+            su_required = True
+            break
+    print(u'INFO: Getting file (with root: %s) "%s"' % (su_required, apk_file))
+    if not su_required:
+        cmd = ['adb', 'pull', apk_file, dst_filename]
+        try:
+            subprocess.check_output(cmd)
+            print(u'INFO: Saved as file "%s"' % (dst_filename,))
+            continue
+        except subprocess.CalledProcessError as e:
+            print(e.output.decode('utf-8').strip())
+            print(u'ERROR: Error pulling file, retrying with root privileges...')
+            su_required = True
+    if su_required:
+        tmp_file = '%s/%s' % (ADB_TMPDIR, dst_filename)
+        cp_cmd = 'cp %s %s' % (quote(apk_file), quote(tmp_file))
+        cmd1 = ['adb', 'shell', 'su', '--command', quote(cp_cmd)]
+        cmd2 = ['adb', 'pull', tmp_file, '.']
+        cmd3 = ['adb', 'shell', 'rm', quote(tmp_file)]
+        try:
+            subprocess.check_output(cmd1)
+            subprocess.check_output(cmd2)
+            subprocess.check_output(cmd3)
+            print(u'INFO: Saved as file "%s"' % (dst_filename,))
+        except subprocess.CalledProcessError as e:
+            print(e.output.decode('utf-8').strip())
+            print(u'ERROR: Cannot pull file "%s"'  % (apk_file,))

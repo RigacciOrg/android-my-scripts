@@ -1,0 +1,13 @@
+#!/bin/sh
+
+if [ "$1" = "-r" ]; then
+    ssh-keygen -f "$HOME/.ssh/known_hosts" -R "[localhost]:8022"
+fi
+
+echo "================================="
+echo "Executing:"
+echo "adb forward tcp:8022 tcp:8022"
+echo "ssh localhost -p 8022"
+echo "================================="
+adb forward tcp:8022 tcp:8022
+ssh localhost -p 8022
