@@ -1,0 +1,38 @@
+[DEFAULT]
+; Remote host will use my_name and password to verify data.
+my_name = android-device-name
+
+; Remote hostname or IP address, UDP port and pre-shared key (password).
+remote_host = remote.server.tld
+remote_port = 33897
+remote_psk = MySecretPassword
+
+; Command used to get location, see "termux-location -h".
+;
+; Get location from GPS, waiting for a fix; expensive on battery and time.
+; Requires ACCESS_FINE_LOCATION permission.
+;location_cmd: termux-location -p gps -r once
+; Get location upon telephony and WiFi cells.
+; Requires ACCESS_COARSE_LOCATION permission.
+;location_cmd: termux-location -p network -r once
+; Get the last location obtained by other running apps;
+; best saving on battery and time, but least accurate.
+; Requires ACCESS_FINE_LOCATION permission.
+location_cmd = termux-location -p passive -r last
+;
+; Max time in seconds to wait for location_cmd to complete.
+location_cmd_timeout = 15
+
+; Exit after time_to_live seconds, or loop forever if zero.
+; The Job Scheduler eventually will restart this, and the
+; new instance will kill the running one.
+time_to_live = 950
+; Acquire a track point every sample_period seconds.
+sample_period = 5
+; Send track points to server every send_data_period seconds.
+send_data_period = 30
+; Discard unsent data buffer if it grows over max_buffer bytes.
+; The theoretical limit is about 65507 bytes.
+max_buffer = 49152
+; Directory for PID file and temporary files.
+home_dir = /data/data/com.termux/files/home
