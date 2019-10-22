@@ -23,10 +23,14 @@ executes for that time, then exits.
 
 ## Features
 
-* Uses **termux-location** to get position coordinates. The tool 
-uses the **Termux:API** app to communicate with Android API, 
-thus have several options to get the location, to balance 
-position accuracy with battery duration.
+* Uses the 
+**[termux-location](https://wiki.termux.com/wiki/Termux-location)** 
+command line tool to get position coordinates; this tool is 
+provided by the the **termux-api** package and relies on the 
+**[Termux:API](https://wiki.termux.com/wiki/Termux:API)** app to 
+communicate with the Android API. It have several options to get 
+the location, to balance position accuracy with battery 
+duration.
 * Communicates with a remote server using **UDP datagrams**, for 
 less overhead on unreliable network connections.
 * If **network is not available**, keeps data into a buffer for 
