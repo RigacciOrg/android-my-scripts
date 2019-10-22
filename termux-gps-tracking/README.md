@@ -3,20 +3,22 @@
 **Python script for remote logging of Android locations**
 
 The Python script **termux-gps-track** runs on Android devices, 
-requiring the **Termux** and **Termux:API** packages. It 
-acquires GPS positions (actually Android locations) via the 
-Termux:API at specified time intervals, then send collected data 
-to a remote host via UDP datagrams, at other specified 
-intervals.
+requiring the **Termux** and **Termux:API** apps. It acquires 
+GPS positions (actually Android locations) via the Termux:API at 
+specified time intervals, then send collected data to a remote 
+host via UDP datagrams, at other specified intervals.
     
 The main loop runs for TIME_TO_LIVE seconds, collecting location
 data at SAMPLE_PERIOD interval and sending it to REMOTE_HOST at
 SEND_DATA_PERIOD interval.
 
-This script is supposed to be run by the Android Job Scheduler,
-which has a minimum period of 15 minutes. So the main loop
-executes for that time, then exits.
+This script was supposed to be run by the Android Job Scheduler, 
+which has a minimum period of 15 minutes. So the main loop 
+executes for that time, then exits. You can also run it manually 
+or at bootstrap, so an endless loop is also configurable.
 
+* Required Android apps: **Termux** and **Termux:API**, 
+suggested: **Termux:Widget** and **Termux:Boot**.
 * Required Termux package: **termux-api**.
 * Required Android permission: **ACCESS_FINE_LOCATION** and/or
 **ACCESS_COARSE_LOCATION** for Termux:API.
@@ -34,14 +36,14 @@ duration.
 * Communicates with a remote server using **UDP datagrams**, for 
 less overhead on unreliable network connections.
 * If **network is not available**, keeps data into a buffer for 
-later sending.
-* When buffer grows over the user-selected limit, **unsent 
-data** are saved to local storage.
-* On program exit, unsent data is **stored locally** and 
-reloaded on next execution.
+**later sending**.
+* When buffer grows over the user-selected limit, **unsent data 
+are saved** to local storage.
+* On program exit, unsent data is **stored locally and 
+reloaded** on next execution.
 * **Data is signed** with username and password (PSK), to avoid 
 tampering.
-* Data is sent in **JSON format**, compressed.
+* Data is sent in **JSON format, compressed**.
 
 ## Installation
 
@@ -50,10 +52,11 @@ tampering.
 * Create a **termux-gps-track.ini** file using the provided 
 sample as a template, edit the values for **my_name**, 
 **remote_host** and **remote_psk**.
+
 * Start the script manually using a 
 **[Termux:Widget](https://wiki.termux.com/wiki/Termux:Widget)** 
-shortcut or periodically via a **[Termux Job 
-Scheduler](https://wiki.termux.com/wiki/Termux-job-scheduler)**. 
+shortcut or periodically via the 
+**[termux-job-scheduler](https://wiki.termux.com/wiki/Termux-job-scheduler)**. 
 You can also run it automatically at device bootsrtap, using the 
 **[Termux:Boot](https://wiki.termux.com/wiki/Termux:Boot)** app. 
 For each mode, be sure to select the proper **time_to_live** 
