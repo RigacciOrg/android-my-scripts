@@ -1,8 +1,13 @@
 # GPS Remote Tracking with Termux:API
 
-Acquire GPS positions (actually Android locations) via the
-Termux:API at specified time intervals, then send collected data
-to a remote host via UDP datagrams, at other specified intervals.
+**Python script for remote logging of Android locations**
+
+The Python script **termux-gps-track** runs on Android devices, 
+requiring the **Termux** and **Termux:API** packages. It 
+acquires GPS positions (actually Android locations) via the 
+Termux:API at specified time intervals, then send collected data 
+to a remote host via UDP datagrams, at other specified 
+intervals.
     
 The main loop runs for TIME_TO_LIVE seconds, collecting location
 data at SAMPLE_PERIOD interval and sending it to REMOTE_HOST at
@@ -33,6 +38,22 @@ reloaded on next execution.
 * **Data is signed** with username and password (PSK), to avoid 
 tampering.
 * Data is sent in **JSON format**, compressed.
+
+## Installation
+
+* Copy the **termux-gps-track** script into a folder, e.g.
+**/data/data/com.termux/files/home/bin/**.
+* Create a **termux-gps-track.ini** file using the provided 
+sample as a template, edit the values for **my_name**, 
+**remote_host** and **remote_psk**.
+* Start the script manually using a 
+**[Termux:Widget](https://wiki.termux.com/wiki/Termux:Widget)** 
+shortcut or periodically via a **[Termux Job 
+Scheduler](https://wiki.termux.com/wiki/Termux-job-scheduler)**. 
+You can also run it automatically at device bootsrtap, using the 
+**[Termux:Boot](https://wiki.termux.com/wiki/Termux:Boot)** app. 
+For each mode, be sure to select the proper **time_to_live** 
+configuration option.
 
 ## Running a script using the Android Job Scheduler
 
