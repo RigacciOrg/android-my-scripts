@@ -49,10 +49,10 @@ tampering.
 
 * Copy the **termux-gps-track** script into a folder, e.g.
 **/data/data/com.termux/files/home/bin/**.
-* Create a **termux-gps-track.ini** file using the provided 
-sample as a template, edit the values for **my_name**, 
-**remote_host** and **remote_psk**.
-
+* In the same directory of the script, create a 
+**termux-gps-track.ini** file using the provided sample as a 
+template, edit the values for **my_name**, **remote_host** and 
+**remote_psk**.
 * Start the script manually using a 
 **[Termux:Widget](https://wiki.termux.com/wiki/Termux:Widget)** 
 shortcut or periodically via the 
