@@ -62,6 +62,13 @@ You can also run it automatically at device bootsrtap, using the
 For each mode, be sure to select the proper **time_to_live** 
 configuration option.
 
+The **receive-termux-data** is a proof of concpet script for a
+daemon receiving the UDP datagrams. It listens on UDP port 33897
+and stores location data either into a GPX file or into
+a PostgreSQL database. Create a **receive-termux-data.ini** file
+in the same directory (see the sample) and add username and password
+used by the termux-gps-track script to verfy received data.
+
 ## Running a script using the Android Job Scheduler
 
 When you start a script with the termux-job-scheduler, it will 

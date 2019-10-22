@@ -15,8 +15,10 @@ This script is supposed to be run by the Android Job Scheduler,
 which has a minimum period of 15 minutes. So the main loop
 executes for that time (default), then exits.
 
+  * Requires Android apps: Termux and Termux:API
   * Requires Termux package: termux-api
-  * Requires Android permission ACCESS_FINE_LOCATION for Termux:API
+  * Requires Android permission for Termux:API:
+    ACCESS_FINE_LOCATION and/or ACCESS_COARSE_LOCATION
 
 This is free software: you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by

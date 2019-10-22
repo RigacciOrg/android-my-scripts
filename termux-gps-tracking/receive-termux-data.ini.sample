@@ -1,0 +1,29 @@
+[DEFAULT]
+
+; The script termux-gps-track uses name/password
+; to sign data before sending.
+;
+; Define here a list of: username:userid:password
+
+psk = android-device-name:1:MySecretPassword
+      another-device:2:AnotherPassword
+
+; Use "0.0.0.0" to bind to any address.
+local_address = 0.0.0.0
+; UDP port to use.
+local_port = 33897
+
+; Discard data received too late by the server (seconds).
+max_recv_delay_sec = 21600
+
+; Android API may provide "last known" location data,
+; which is marked with its age (elapsed time).
+; Discard not fresh enough location data (seconds).
+max_elapsed_location_sec = 120
+
+; Connect to PostgreSQL to store received positions.
+;pg_connect = host=127.0.1 user=dbusername password=dbpassword dbname=dbname
+;pg_connect =
+
+; Directory for writing GPX files.
+home_dir = /.

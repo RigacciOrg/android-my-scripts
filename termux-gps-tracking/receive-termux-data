@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Copyright (C) 2019 Niccolo Rigacci <niccolo@rigacci.org>
+
+Example script to receive GPS data sent by termux-gps-track.
+This is the server part, listening on UDP port for data coming
+from Android device(s). This is not actually a "daemon" because
+it lacks all the stuff for running in background, etc. Just a
+proof of concept.
+
+Data is checked against username/password and saved either as
+GPX file or inserted into a PostgreSQL database.
+
+This is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published
+by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+"""
+
+import configparser
+import datetime
+import gzip
+import hashlib
+import json
+import os.path
+import socket
+import sys
+import time
+
+NAME = os.path.basename(sys.argv[0])
+DIRNAME = os.path.dirname(sys.argv[0])
+# CONFIG_FILE will be searched in current dir or in prog DIRNAME.
+CONFIG_FILE = '%s.ini' % (NAME,)
+if not os.path.exists(CONFIG_FILE):
+    CONFIG_FILE = os.path.join(DIRNAME, CONFIG_FILE)
+
+#-------------------------------------------------------------------------
+# Read config file, eventually merge hard-coded defaults.
+#-------------------------------------------------------------------------
+config = configparser.ConfigParser()
+config['DEFAULT'] = {
+    'local_address': '0.0.0.0',
+    'local_port': '33897',
+    # Discard data received too late by the server (seconds).
+    'max_recv_delay_sec': str(3600 * 6),
+    # Discard not fresh enough location data (seconds).
+    'max_elapsed_location_sec': str(60 * 2),
+    'pg_connect': '',
+    # Directory for writing GPX files.
+    'home_dir': './'
+}
+config.read(CONFIG_FILE)
+config['current'] = {}
+cfg = config['current']
+PSK = {}
+for line in cfg.get('psk').splitlines():
+    (username, userid, password) = line.split(':')
+    PSK[username] = (userid, password)
+LOCAL_ADDRESS = cfg.get('local_address')
+LOCAL_PORT = cfg.getint('local_port')
+MAX_RECV_DELAY_SEC = cfg.getint('max_recv_delay_sec')
+MAX_ELAPSED_LOCATION_SEC = cfg.getint('max_elapsed_location_sec')
+PG_CONNECT = cfg.get('pg_connect')
+HOME_DIR = cfg.get('home_dir')
+
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def my_log(msg):
+    print('%s %s' % (time.strftime('%Y-%m-%d %H:%M:%S'), msg))
+
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def receive_datagram():
+    data_bytes, remote_addr = SOCK.recvfrom(10240)
+    remote_ip, remote_port = remote_addr
+    try:
+        # Decompress, extract MD5 and decode JSON data.
+        payload = gzip.decompress(data_bytes).decode('utf-8')
+        data_json = payload[:-32]
+        data_md5 = payload[-32:]
+        data = json.loads(data_json)
+    except Exception as e:
+        my_log(u'WARNING: Invalid datagram from %s: %s' % (remote_ip, str(e)))
+        return None
+    my_log(u'INFO: Received datagram from %s' % (remote_ip,))
+    if 'hostname' not in data:
+        my_log(u'WARNING: Received data does not contain the "hostname" key')
+        return None
+    if data['hostname'] not in PSK:
+        my_log(u'WARNING: Received hostname "%s" not found in PSK dictionary' % (data['hostname'],))
+        return None
+    # Verify PSK signature.
+    remote_psk = PSK[data['hostname']][1]
+    data_signed = data_json + remote_psk
+    check_md5 = hashlib.md5(data_signed.encode('utf-8')).hexdigest()
+    if data_md5 != check_md5:
+        my_log(u'WARNING: MD5 signature check FAILED')
+        return None
+    #my_log(u'DEBUG: Received data: %s' % (data,))
+    return data
+
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def gpx_trkpt(p, tstamp):
+    """ Return a string with a GPX <trkpt> """
+    utc = datetime.datetime.utcfromtimestamp(tstamp).strftime('%Y-%m-%dT%H:%M:%SZ')
+    trkpt = '<trkpt lat="%.8f" lon="%.8f">' % (p['latitude'], p['longitude'])
+    trkpt += '\n  <time>%s</time>' % (utc,)
+    if p['altitude'] is not None:
+        trkpt += '\n  <ele>%.2f</ele>' % (p['altitude'],)
+    trkpt += '\n  <extensions>'
+    trkpt += '\n    <android:wptExtension>'
+    if p['speed'] is not None:
+        trkpt += '\n      <android:speed>%.4f</android:speed>' % (p['speed'],)
+    if p['accuracy'] is not None:
+        trkpt += '\n      <android:accuracy>%.4f</android:accuracy>' % (p['accuracy'],)
+    if p['elapsedMs'] is not None:
+        trkpt += '\n      <android:elapsedMs>%d</android:elapsedMs>' % (p['elapsedMs'],)
+    if p['provider'] is not None:
+        trkpt += '\n      <android:provider>%s</android:provider>' % (p['provider'],)
+    trkpt += '\n    </android:wptExtension>'
+    trkpt += '\n  </extensions>'
+    trkpt += '\n</trkpt>'
+    return trkpt
+
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def store_sql(p, tstamp, remote_host, recv_timestamp):
+    """ Insert one location trakpoint into SQL database """
+    if PG_CONNECT == '':
+        return
+    import psycopg2
+    try:
+        conn = psycopg2.connect(PG_CONNECT)
+        curs = conn.cursor()
+    except Exception as e:
+        my_log(u"ERROR: Cannot connect to database: %s" % (str(e),))
+        return
+    # Compensate GPS timestamp with Termux:API elapsedMs, if any.
+    if 'elapsedMs' in p:
+        tstamp -= int(p['elapsedMs'] / 1000)
+    utc = datetime.datetime.utcfromtimestamp(tstamp).strftime('%Y-%m-%dT%H:%M:%SZ')
+    utc_recv = datetime.datetime.utcfromtimestamp(recv_timestamp).strftime('%Y-%m-%dT%H:%M:%SZ')
+    host_id = PSK[remote_host][0]
+    wpt = 'POINT(%0.9f %0.9f)' % (p['longitude'], p['latitude'])
+    sql = 'INSERT INTO positions (idobject, rcvd_date_time, date_time, elevation, wpt)'
+    sql += ' VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326))'
+    my_log(sql % (host_id, utc_recv, utc, p['altitude'], wpt))
+    try:
+        curs.execute(sql, (host_id, utc_recv, utc, p['altitude'], wpt))
+        conn.commit()
+    except psycopg2.IntegrityError:
+        my_log(u'WARNING: Duplicate key: (%s, %s)' % (remote_host, utc))
+        return
+    except Exception as e:
+        my_log(u"ERROR: Cannot INSERT INTO database: %s" % (str(e),))
+        return
+
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def store_gpx(p, tstamp, remote_host):
+    gpx_filename = os.path.join(HOME_DIR, '%s.gpx' % (remote_host,))
+    if not os.path.exists(gpx_filename):
+        with open(gpx_filename, 'w') as f:
+            f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+            f.write('<gpx version="1.1">\n<trk>\n<trkseg>\n')
+    with open(gpx_filename, 'a') as f:
+        f.write(gpx_trkpt(p, tstamp))
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def process_locations(remote_host, recv_timestamp, locations):
+    """ Process a dictionary array of location points """
+    my_log(u'Received %d records from %s' % (len(locations), remote_host))
+    timestamps = sorted(locations)
+    for t in timestamps:
+        tstamp = int(t)
+        loc = locations[t]
+        if tstamp > recv_timestamp:
+            my_log(u'WARNING: Data rejected: Timestamp is in the future by %d seconds' % (timestamp - recv_timestamp,))
+            continue
+        if (recv_timestamp - tstamp) > MAX_RECV_DELAY_SEC:
+            my_log(u'WARNING: Data rejected: Timestamp is old by %d seconds, discarded' % (recv_timestamp - tstamp,))
+            continue
+        if 'elapsedMs' in loc:
+            elapsed_sec = int(loc['elapsedMs'] / 1000)
+        else:
+            elapsed_sec = 0
+        if elapsed_sec > MAX_ELAPSED_LOCATION_SEC:
+            my_log(u'INFO: Data rejected: Location data is stale by %d seconds, discarded' % (elapsed_sec,))
+            continue
+        p = {}
+        for key in ('latitude', 'longitude', 'altitude', 'speed', 'bearing', 'provider', 'accuracy', 'elapsedMs'):
+            if key in loc:
+                p[key] = loc[key]
+            else:
+                p[key] = None
+        if p['latitude'] is None or p['longitude'] is None:
+            my_log(u'WARNING: Data rejected: Missing lat/lon: %s' % (loc,))
+        else:
+            store_gpx(p, tstamp, remote_host)
+            store_sql(p, tstamp, remote_host, recv_timestamp)
+
+
+#-------------------------------------------------------------------------
+#-------------------------------------------------------------------------
+def process_telephony_cellinfo(remote_host, recv_timestamp, data):
+    try:
+        registered = False
+        for cinfo in data['termux_telephony_cellinfo']:
+            if 'registered' in cinfo:
+                if cinfo['registered'] == True:
+                    # ['type']  # E.g. lte, wcdma, gsm
+                    # ['cid']   # GSM/WCDMA: Cell ID, e.g. 50784
+                    # ['lac']   # GSM/WCDMA: Location Area Code e.g. 34566
+                    # ['psc']   # GSM/WCDMA: Primary Scrambling Code 0..512, 65535 = unknown
+                    # ['ci']    # LTE: Cell ID, e.g. 256427581
+                    # ['tac']   # LTE: Tracking Area Code LTE e.g. 57734
+                    # ['pci']   # Physical Cell Id. e.g. 154
+                    # ['mcc']   # Mobile Country Code e.g. 222
+                    # ['mnc']   # Mobile Network Code e.g. 50
+                    # ['level'] # Signal level as an int from 0..4
+                    # ['dbm']   # Signal strength as dBm E.g. -89, -113, ...
+                    # ['asu']   # Arbitrary Strength Unit, 0..31 (gsm and wcdma),
+                    #           # or 0..97 (lte and cdma). 99 = unknown
+                    registered = True
+                    break
+        if registered:
+            my_log(u'INFO: Host %s registered on telephony cell: %s' % (remote_host, json.dumps(cinfo)))
+        else:
+            my_log(u'INFO: Host %s not registerd on any telephony cell' % (remote_host,))
+    except:
+        my_log(u'ERROR: Host %s: invalid telephony cellinfo: %s' % (remote_host, data['termux_telephony_cellinfo']))
+
+
+#-------------------------------------------------------------------------
+# Main loop.
+#-------------------------------------------------------------------------
+SOCK = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+SOCK.bind((LOCAL_ADDRESS, LOCAL_PORT))
+while True:
+    data = receive_datagram()
+    if data is None:
+        continue
+    recv_timestamp = round(time.time())
+    if 'termux_locations' in data:
+        process_locations(data['hostname'], recv_timestamp, data['termux_locations'])
+    if 'termux_telephony_cellinfo' in data:
+        process_telephony_cellinfo(data['hostname'], recv_timestamp, data)
