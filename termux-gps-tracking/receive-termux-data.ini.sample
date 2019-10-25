@@ -19,7 +19,7 @@ max_recv_delay_sec = 21600
 ; Android API may provide "last known" location data,
 ; which is marked with its age (elapsed time).
 ; Discard not fresh enough location data (seconds).
-max_elapsed_location_sec = 120
+max_elapsed_location_sec = 300
 
 ; Connect to PostgreSQL to store received positions.
 ;pg_connect = host=127.0.1 user=dbusername password=dbpassword dbname=dbname

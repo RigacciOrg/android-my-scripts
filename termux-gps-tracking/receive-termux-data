@@ -45,10 +45,10 @@ config['DEFAULT'] = {
     # Discard data received too late by the server (seconds).
     'max_recv_delay_sec': str(3600 * 6),
     # Discard not fresh enough location data (seconds).
-    'max_elapsed_location_sec': str(60 * 2),
+    'max_elapsed_location_sec': str(60 * 5),
     'pg_connect': '',
     # Directory for writing GPX files.
-    'home_dir': './'
+    'home_dir': '.'
 }
 config.read(CONFIG_FILE)
 config['current'] = {}
