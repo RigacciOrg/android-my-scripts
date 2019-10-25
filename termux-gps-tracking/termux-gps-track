@@ -190,8 +190,10 @@ class remoteLogger():
             output_obj = None
         return output_obj
 
-    def save_data(self, filename):
+    def save_data(self, filename=None):
         """ Save unsent location data to a JSON file """
+        if filename == None:
+            filename = self.file_locations_saved
         try:
             with open(filename, 'w') as f:
                 json.dump(self.location, f)
@@ -286,7 +288,7 @@ class remoteLogger():
             self.my_log(u'Received signal %s, exiting' % (signum,), 'INFO')
         else:
             self.my_log(u'Exiting program', 'INFO')
-        self.save_data(self.file_locations_saved)
+        self.save_data()
         os.remove(self.pid_file)
         sys.exit(0)
 
@@ -304,5 +306,5 @@ if __name__ == '__main__':
     # Flush or save unsent data.
     if len(myLogger.location) > 0:
         if not myLogger.send_data():
-            myLogger.save_data(FILE_LOCATIONS_SAVED)
+            myLogger.save_data()
     myLogger.clean_exit(None, None)
