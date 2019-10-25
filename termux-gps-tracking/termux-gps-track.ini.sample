@@ -36,3 +36,9 @@ send_data_period = 30
 max_buffer = 49152
 ; Directory for PID file and temporary files.
 home_dir = /data/data/com.termux/files/home
+
+; File name to append log to, or 'stdout'.
+log_to = stdout
+;log_to = /sdcard/termux/termux-gps-track.log
+; Values: DEBUG INFO NOTICE WARNING ERROR CRITICAL NONE
+logging = DEBUG

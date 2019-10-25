@@ -15,10 +15,8 @@ This script is supposed to be run by the Android Job Scheduler,
 which has a minimum period of 15 minutes. So the main loop
 executes for that time (default), then exits.
 
-  * Requires Android apps: Termux and Termux:API
   * Requires Termux package: termux-api
-  * Requires Android permission for Termux:API:
-    ACCESS_FINE_LOCATION and/or ACCESS_COARSE_LOCATION
+  * Requires Android permission ACCESS_FINE_LOCATION for Termux:API
 
 This is free software: you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by
@@ -40,257 +38,271 @@ import subprocess
 import sys
 import time
 
-NAME = os.path.basename(sys.argv[0])
-DIRNAME = os.path.dirname(sys.argv[0])
-# CONFIG_FILE will be searched in current dir or in prog DIRNAME.
-CONFIG_FILE = '%s.ini' % (NAME,)
-if not os.path.exists(CONFIG_FILE):
-    CONFIG_FILE = os.path.join(DIRNAME, CONFIG_FILE)
+__author__ = "Niccolo Rigacci"
+__copyright__ = "Copyright 2019 Niccolo Rigacci <niccolo@rigacci.org>"
+__license__ = "GPLv3-or-later"
+__email__ = "niccolo@rigacci.org"
+__version__ = "0.2.0"
 
-#-------------------------------------------------------------------------
-# Initialize logging.
-#-------------------------------------------------------------------------
-VERBOSE = False
-if len(sys.argv) > 1:
-    if sys.argv[1] == '-v':
-        VERBOSE = True
-def my_log(msg):
-    if VERBOSE:
-        print(msg)
-
-#-------------------------------------------------------------------------
-# Read config file, eventually merge hard-coded defaults.
-#-------------------------------------------------------------------------
-config = configparser.ConfigParser()
-config['DEFAULT'] = {
-    # Remote host will use MY_NAME and REMOTE_PSK (password) to verify data.
-    'my_name': '',
-    'remote_host': '',
-    'remote_port': '33897',
-    'remote_psk': '',
-    # See "termux-location -h" for help.
-    'location_cmd': 'termux-location -p passive -r last',
-    # Max time in seconds to wait for LOCATION_CMD to complete.
-    'location_cmd_timeout': '15',
-    # Exit after TIME_TO_LIVE seconds, or loop forever if zero.
-    # The Job Scheduler eventually will restart this, and the
-    # new instance will kill the running one.
-    'time_to_live': str(15 * 60 + 20),
-    # Acquire a track point every SAMPLE_PERIOD seconds.
-    'sample_period': '5',
-    # Send track points to server every SEND_DATA_PERIOD seconds.
-    'send_data_period': '30',
-    # Discard unsent data buffer if it grows over MAX_BUFFER bytes.
-    # The theoretical limit is about 65507 bytes.
-    'max_buffer': '49152',
-    # Directory for termux-gps-track.ini, PID file, temporary files.
-    'home_dir': '/data/data/com.termux/files/home'
+LOG_LEVEL = {
+    'DEBUG':    10,
+    'INFO':     20,
+    'NOTICE':   25,
+    'WARNING':  30,
+    'ERROR':    40,
+    'CRITICAL': 50,
+    'NONE':    100
 }
-try:
-    config.read(CONFIG_FILE)
-    my_log(u'DEBUG: Using config "%s"' % (CONFIG_FILE,))
-except:
-    my_log(u'DEBUG: Error reading config "%s"' % (CONFIG_FILE,))
-# Create a dummy [current] section, just to use [DEFAULT].
-config['current'] = {}
-cfg = config['current']
-
-MY_NAME = cfg.get('my_name')
-REMOTE_HOST = cfg.get('remote_host')
-REMOTE_PORT = cfg.getint('remote_port')
-REMOTE_PSK = cfg.get('remote_psk')
-LOCATION_CMD = cfg.get('location_cmd').split()
-LOCATION_CMD_TIMEOUT = cfg.getint('location_cmd_timeout')
-TIME_TO_LIVE = cfg.getint('time_to_live')
-SAMPLE_PERIOD = cfg.getint('sample_period')
-SEND_DATA_PERIOD = cfg.getint('send_data_period')
-MAX_BUFFER = cfg.getint('max_buffer')
-HOME_DIR = cfg.get('home_dir')
-# Data files, relative to HOME_DIR.
-PID_FILE = os.path.join(HOME_DIR, '%s.pid' % (NAME,))
-FILE_LOCATIONS_SAVED = os.path.join(HOME_DIR, 'location.json')
-FILE_LOCATIONS_DISCARDED = os.path.join(HOME_DIR, 'location.%s.json')
-
 
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
-def cmd_json(cmd, maxtime=10):
-    """ Return the JSON-decoded output of an external command """
-    try:
-        json_output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=maxtime).decode('utf-8')
-    except Exception as e:
-        json_output = json.dumps({'Exception': str(e)})
-    try:
-        output_obj = json.loads(json_output)
-    except:
-        output_obj = None
-    return output_obj
+class remoteLogger():
 
-#-------------------------------------------------------------------------
-#-------------------------------------------------------------------------
-def send_data(location):
-    """ Send UDP datagram to remote host, with locations """
-    data = {}
-    if REMOTE_HOST == '':
-        my_log(u'ERROR: send_data(): Remote host is blank')
-        return False
-    data['hostname'] = MY_NAME
-    data['termux_locations'] = location
-    my_log(u'DEBUG: Sending data to host "%s:%d": %s' % (REMOTE_HOST, REMOTE_PORT, data,))
-    data_json = json.dumps(data)
-    # Sign with PSK.
-    data_signed = data_json + REMOTE_PSK
-    data_md5 = hashlib.md5(data_signed.encode('utf-8')).hexdigest()
-    payload = data_json + data_md5
-    payload_gzip = gzip.compress(payload.encode('utf-8'), compresslevel=9)
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto(payload_gzip, (REMOTE_HOST, REMOTE_PORT))
-        sock.close()
-        return True
-    except Exception as e:
-        my_log(u'ERROR: send_data() Exception: %s' % (str(e),))
-        return False
+    def __init__(self):
+        self.prog_name = os.path.basename(sys.argv[0])
+        self.dir_name = os.path.dirname(sys.argv[0])
+        self.cfg_file = '%s.ini' % (self.prog_name,)
+        if not os.path.exists(self.cfg_file):
+            self.cfg_file = os.path.join(self.dir_name, self.cfg_file)
+        self.read_config()
+        self.my_log(u'Starting %s with config "%s"' % (self.prog_name, self.cfg_file), 'INFO')
+        self.pid_file = os.path.join(self.home_dir, '%s.pid' % (self.prog_name,))
+        self.file_locations_saved = os.path.join(self.home_dir, 'location.json')
+        self.file_locations_discarded = os.path.join(self.home_dir, 'location.%s.json')
+        self.location = {}
 
-#-------------------------------------------------------------------------
-#-------------------------------------------------------------------------
-def load_saved_data():
-    """ Load unsent location data from a saved JSON file """
-    location = {}
-    if os.path.exists(FILE_LOCATIONS_SAVED):
+    def read_config(self):
+        """ Merge default options with ini file """
+        config = configparser.ConfigParser()
+        # Customize the following defaults into the .ini file.
+        config['DEFAULT'] = {
+            # remote_host will use my_name and remote_psk to verify data.
+            'my_name': '',
+            'remote_host': '',
+            'remote_port': '33897',
+            'remote_psk': '',
+            # See "termux-location -h" for help.
+            'location_cmd': 'termux-location -p passive -r last',
+            # Max time in seconds to wait for location_cmd to complete.
+            'location_cmd_timeout': '15',
+            # Exit main loop after time_to_live seconds, or loop forever if zero.
+            'time_to_live': str(15 * 60 + 20),
+            # Acquire a track point every sample_period seconds.
+            'sample_period': '5',
+            # Send track points to remote every send_data_period seconds.
+            'send_data_period': '30',
+            # Discard unsent data buffer if it grows over max_buffer bytes.
+            # The theoretical limit for UDP datagrams is about 65507 bytes.
+            'max_buffer': '49152',
+            # Directory for ini file, PID file, temporary files.
+            'home_dir': '.',
+            # File name to append log to, or 'stdout'.
+            'log_to': 'stdout',
+            # Values: DEBUG INFO NOTICE WARNING ERROR CRITICAL NONE
+            'logging': 'DEBUG'
+        }
         try:
-            with open(FILE_LOCATIONS_SAVED, 'r') as f:
-                location = json.load(f)
-            os.remove(FILE_LOCATIONS_SAVED)
-            my_log(u'INFO: Saved locations successfully re-loaded: "%s"' % (FILE_LOCATIONS_SAVED,))
+            config.read(self.cfg_file)
         except Exception as e:
-            my_log(u'ERROR: load_saved_data() Exception: %s' % (str(e),))
-    return location
+            print(u'ERROR: Reading config "%s": %s' % (self.cfg_file, str(e)))
+            sys.exit(1)
+        # Create a dummy [current] section to merge [DEFAULT] and file.
+        config['current'] = {}
+        cfg = config['current']
+        self.my_name = cfg.get('my_name')
+        self.remote_host = cfg.get('remote_host')
+        self.remote_port = cfg.getint('remote_port')
+        self.remote_psk = cfg.get('remote_psk')
+        self.location_cmd = cfg.get('location_cmd').split()
+        self.location_cmd_timeout = cfg.getint('location_cmd_timeout')
+        self.time_to_live = cfg.getint('time_to_live')
+        self.sample_period = cfg.getint('sample_period')
+        self.send_data_period = cfg.getint('send_data_period')
+        self.max_buffer = cfg.getint('max_buffer')
+        self.home_dir = cfg.get('home_dir')
+        self.log_to = cfg.get('log_to')
+        self.logging = LOG_LEVEL[cfg.get('logging')]
 
-#-------------------------------------------------------------------------
-#-------------------------------------------------------------------------
-def save_data(location, filename):
-    """ Save unsent location data to a JSON file """
-    try:
-        with open(filename, 'w') as f:
-            json.dump(location, f)
-        my_log(u'INFO: Locations data saved successfully: "%s"' % (filename,))
-    except Exception as e:
-        my_log(u'ERROR: save_data() Exception: %s' % (str(e),))
-
-#-------------------------------------------------------------------------
-# If PID file exists, try to kill the running process.
-#-------------------------------------------------------------------------
-def write_pid(kill_running=True):
-    """ Return True if can create its own PID file """
-    if kill_running and os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE, 'r') as f:
-                pid = int(f.read())
-            my_log(u'DEBUG: Sending SIGTERM to process ID %d' % (pid,))
-            os.kill(pid, signal.SIGTERM)
-            time.sleep(2)
-        except:
-            pass
-    try:
-        if os.path.exists(PID_FILE):
-            with open(PID_FILE, 'r') as f:
-                pid = int(f.read())
-            my_log(u'DEBUG: Found PID file with process ID %d' % (pid,))
-            try:
-                # Send a dummy (zero) signal to the PID.
-                os.kill(pid, 0)
-                proc_exists = True
-            except OSError as err:
-                if err.errno == errno.ESRCH:
-                    # ESRCH == No such process
-                    proc_exists = False
-                elif err.errno == errno.EPERM:
-                    # EPERM == Process exists, but deny access
-                    proc_exists = True
-                else:
-                    # Other errors (may be EINVAL)
-                    raise
-            if proc_exists:
-                my_log(u'ERROR: PID file exists and process %d is running' % (pid,))
-                return False
+    def my_log(self, msg, level):
+        """ Write a message to file or stdout """
+        if LOG_LEVEL[level] >= self.logging:
+            line = '%s %-8s %s' % (time.strftime('%Y-%m-%d %H:%M:%S'), level, msg)
+            if self.log_to == 'stdout':
+                print(line)
             else:
-                my_log(u'DEBUG: PID file is stale, removing')
-                os.remove(PID_FILE)
-        with open(PID_FILE, 'w') as f:
-            f.write(str(os.getpid()))
-        my_log(u'DEBUG: Wrote PID file "%s"' % (PID_FILE,))
-        return True
-    except Exception as e:
-        my_log(u'ERROR: write_pid() Exception: %s' % (str(e),))
-        return False
+                line += '\n'
+                with open(slef.log_to, 'a') as f:
+                    f.write(line)
+
+    def acquire_pid(self, kill_running=True):
+        """ Return True if can create the PID file, eventually killing a running instance """
+        if kill_running and os.path.exists(self.pid_file):
+            try:
+                with open(self.pid_file, 'r') as f:
+                    pid = int(f.read())
+                self.my_log(u'Found PID file, sending SIGTERM to process %d' % (pid,), 'DEBUG')
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(1)
+            except:
+                pass
+        try:
+            if os.path.exists(self.pid_file):
+                with open(self.pid_file, 'r') as f:
+                    pid = int(f.read())
+                self.my_log(u'Found PID file for process %d' % (pid,), 'DEBUG')
+                try:
+                    # Send a dummy (zero) signal to the PID.
+                    os.kill(pid, 0)
+                    proc_exists = True
+                except OSError as err:
+                    if err.errno == errno.ESRCH:
+                        # ESRCH == No such process
+                        proc_exists = False
+                    elif err.errno == errno.EPERM:
+                        # EPERM == Process exists, but deny access
+                        proc_exists = True
+                    else:
+                        # Other errors (may be EINVAL)
+                        raise
+                if proc_exists:
+                    self.my_log(u'PID file exists and process %d still running' % (pid,), 'ERROR')
+                    return False
+                else:
+                    self.my_log(u'PID file is stale, removing it', 'DEBUG')
+                    os.remove(self.pid_file)
+            with open(self.pid_file, 'w') as f:
+                f.write(str(os.getpid()))
+            self.my_log(u'Created PID file "%s"' % (self.pid_file,), 'INFO')
+            return True
+        except Exception as e:
+            self.my_log(u'write_pid() Exception: %s' % (str(e),), 'ERROR')
+            return False
+
+    def cmd_json(self, cmd, maxtime=10):
+        """ Return the JSON-decoded output of an external command """
+        try:
+            json_output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=maxtime).decode('utf-8')
+        except Exception as e:
+            json_output = json.dumps({'Exception': str(e)})
+        try:
+            output_obj = json.loads(json_output)
+        except:
+            output_obj = None
+        return output_obj
+
+    def save_data(self, filename):
+        """ Save unsent location data to a JSON file """
+        try:
+            with open(filename, 'w') as f:
+                json.dump(self.location, f)
+            self.my_log(u'Saved %d location records to "%s"' % (len(self.location), filename), 'INFO')
+        except Exception as e:
+            self.my_log(u'save_data() Exception: %s' % (str(e),), 'ERROR')
+
+    def load_saved_data(self):
+        """ Load unsent location data from a saved JSON file """
+        self.location = {}
+        if os.path.exists(self.file_locations_saved):
+            try:
+                with open(self.file_locations_saved, 'r') as f:
+                    self.location = json.load(f)
+                os.remove(self.file_locations_saved)
+                self.my_log(u'Reloaded %d location records from "%s"' % (len(self.location), self.file_locations_saved), 'INFO')
+            except Exception as e:
+                self.my_log(u'load_saved_data() Exception: %s' % (str(e),), 'ERROR')
+                self.location = {}
+
+    def send_data(self):
+        """ Send UDP datagram to remote host, with locations """
+        data = {}
+        if self.remote_host == '':
+            self.my_log(u'send_data(): Remote host is blank', 'ERROR')
+            return False
+        data['hostname'] = self.my_name
+        data['termux_locations'] = self.location
+        self.my_log(u'Sending data to host "%s:%d": %s' % (self.remote_host, self.remote_port, data,), 'DEBUG')
+        data_json = json.dumps(data)
+        # Sign with PSK.
+        data_signed = data_json + self.remote_psk
+        data_md5 = hashlib.md5(data_signed.encode('utf-8')).hexdigest()
+        payload = data_json + data_md5
+        payload_gzip = gzip.compress(payload.encode('utf-8'), compresslevel=9)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(payload_gzip, (self.remote_host, self.remote_port))
+            sock.close()
+            return True
+        except Exception as e:
+            self.my_log(u'send_data() Exception: %s' % (str(e),), 'ERROR')
+            return False
+
+    def mainLoop(self):
+        """ Main loop: collect data and send to remote host """
+        start_time = int(time.time())
+        sent_time = start_time
+        time_now = start_time
+        # Send to remote only one error per type.
+        got_error_termux = False
+        got_error_api = False
+        while self.time_to_live > 0 and (time_now - start_time) < self.time_to_live:
+            loc = self.cmd_json(self.location_cmd, maxtime=self.location_cmd_timeout)
+            if 'error' in loc:
+                self.my_log(u'termux-location: %s' % (loc['error'],), 'ERROR')
+                if not got_error_termux:
+                    self.location[str(time_now)] = loc
+                    got_error_termux = True
+            elif 'API_ERROR' in loc:
+                self.my_log(u'Android API: %s' % (loc['API_ERROR'],), 'ERROR')
+                if not got_error_api:
+                    self.location[str(time_now)] = loc
+                    got_error_api = True
+            else:
+                self.my_log(u'Got location at timestamp %d' % (time_now,), 'INFO')
+                self.my_log(loc, 'DEBUG')
+                self.location[str(time_now)] = loc
+            if (time_now - sent_time) > self.send_data_period:
+                if self.send_data():
+                    self.my_log(u'Sent UDP datagram with %d records to remote host' % (len(self.location),), 'INFO')
+                    # TODO: Wait for some acknowledge, if required.
+                    self.location = {}
+                    got_error_termux = False
+                    got_error_api = False
+                else:
+                    unsent_bytes = len(gzip.compress(json.dumps(self.location).encode('utf-8'), compresslevel=9))
+                    if unsent_bytes > self.max_buffer:
+                        self.my_log(u'Too many unsent data, discarding %d records' % (len(self.location),), 'WARNING')
+                        filename = self.file_locations_discarded % (datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
+                        self.save_data(filename)
+                        self.location = {}
+                    else:
+                        self.my_log(u'Keeping unsent data: %d records (%d bytes)' % (len(self.location), unsent_bytes), 'INFO')
+                sent_time = time_now
+            time.sleep(self.sample_period)
+            time_now = int(time.time())
+
+    def clean_exit(self, signum, frame):
+        """ Save unsent data, remove PID file and exit """
+        if signum is not None:
+            self.my_log(u'Received signal %s, exiting' % (signum,), 'INFO')
+        else:
+            self.my_log(u'Exiting program', 'INFO')
+        self.save_data(self.file_locations_saved)
+        os.remove(self.pid_file)
+        sys.exit(0)
 
 #-------------------------------------------------------------------------
-#-------------------------------------------------------------------------
-def exit_program(signum, frame):
-    """ Perform clean-up of PID file and save unsent data """
-    if signal is not None:
-        my_log(u'INFO: Received signal %s, exiting' % (signum,))
-    else:
-        my_log(u'INFO: Exiting program')
-    save_data(location, FILE_LOCATIONS_SAVED)
-    os.remove(PID_FILE)
-    sys.exit(0)
-
-
-#-------------------------------------------------------------------------
-# Main loop: collect data and send to remote host.
 #-------------------------------------------------------------------------
 if __name__ == '__main__':
-    # Check the PID file to avoid concurrent executions, eventually
-    # kill an already running instance.
-    if not write_pid():
+    myLogger = remoteLogger()
+    signal.signal(signal.SIGINT, myLogger.clean_exit)
+    signal.signal(signal.SIGTERM, myLogger.clean_exit)
+    # Acquire PID file to avoid concurrent executions.
+    if not myLogger.acquire_pid(kill_running=True):
         sys.exit(1)
-    location = load_saved_data()
-    start_time = int(time.time())
-    sent_time = start_time
-    time_now = start_time
-    signal.signal(signal.SIGINT, exit_program)
-    signal.signal(signal.SIGTERM, exit_program)
-    # Send to remote only one error per type.
-    got_error_termux = False
-    got_error_api = False
-    while TIME_TO_LIVE > 0 and (time_now - start_time) < TIME_TO_LIVE:
-        loc = cmd_json(LOCATION_CMD, maxtime=LOCATION_CMD_TIMEOUT)
-        if 'error' in loc:
-            my_log(u'ERROR: termux-location: %s' % (loc['error'],))
-            if not got_error_termux:
-                location[str(time_now)] = loc
-                got_error_termux = True
-        elif 'API_ERROR' in loc:
-            my_log(u'ERROR: Android API: %s' % (loc['API_ERROR'],))
-            if not got_error_api:
-                location[str(time_now)] = loc
-                got_error_api = True
-        else:
-            my_log(u'INFO: Got location with timestamp %d' % (time_now,))
-            my_log(u'DEBUG: %s' % (location[str(time_now)],))
-            location[str(time_now)] = loc
-        if (time_now - sent_time) > SEND_DATA_PERIOD:
-            if send_data(location):
-                my_log(u'INFO: Sent UDP datagram to remote host')
-                location = {}
-                got_error_termux = False
-                got_error_api = False
-            else:
-                unsent_bytes = len(gzip.compress(json.dumps(location).encode('utf-8'), compresslevel=9))
-                if unsent_bytes > MAX_BUFFER:
-                    my_log(u'WARNING: Too many unsent data, discarding %d records' % (len(location),))
-                    filename = FILE_LOCATIONS_DISCARDED % (datetime.datetime.now().strftime("%Y%m%d%H%M%S"))
-                    save_data(location, filename)
-                    location = {}
-                else:
-                    my_log(u'INFO: Keeping unsent data: %d records (%d bytes)' % (len(location), unsent_bytes))
-            sent_time = time_now
-        time.sleep(SAMPLE_PERIOD)
-        time_now = int(time.time())
-    # Main loop is terminated, flush or save unsent data.
-    if len(location) > 0:
-        if not send_data(location):
-            save_data(location, FILE_LOCATIONS_SAVED)
-    exit_program(None, None)
+    myLogger.load_saved_data()
+    myLogger.mainLoop()
+    # Flush or save unsent data.
+    if len(myLogger.location) > 0:
+        if not myLogger.send_data():
+            myLogger.save_data(FILE_LOCATIONS_SAVED)
+    myLogger.clean_exit(None, None)
