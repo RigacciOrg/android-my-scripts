@@ -1,6 +1,6 @@
 #!/bin/sh
 
-if [ "$1" = "-r" ]; then
+if [ "$1" = "-f" ]; then
     ssh-keygen -f "$HOME/.ssh/known_hosts" -R "[localhost]:8022"
 fi
 
