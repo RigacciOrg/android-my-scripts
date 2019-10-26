@@ -131,7 +131,7 @@ class remoteLogger():
                 print(line)
             else:
                 line += '\n'
-                with open(slef.log_to, 'a') as f:
+                with open(self.log_to, 'a') as f:
                     f.write(line)
 
     def acquire_pid(self, kill_running=True):
