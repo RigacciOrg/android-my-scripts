@@ -246,7 +246,7 @@ class remoteLogger():
         # Send to remote only one error per type.
         got_error_termux = False
         got_error_api = False
-        while self.time_to_live > 0 and (time_now - start_time) < self.time_to_live:
+        while self.time_to_live == 0 or (time_now - start_time) < self.time_to_live:
             loc = self.cmd_json(self.location_cmd, maxtime=self.location_cmd_timeout)
             if 'error' in loc:
                 self.my_log(u'termux-location: %s' % (loc['error'],), 'ERROR')
